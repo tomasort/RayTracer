@@ -24,7 +24,7 @@ using json = nlohmann::json;
 // Shortcut to avoid Eigen:: everywhere, DO NOT USE IN .h
 using namespace Eigen;
 int MAX_BOUNCE = 5;
-bool SHOW_PROGRESS = false;
+bool SHOW_PROGRESS = true;
 int MESH_INTERSECTION_METHOD = 2;
 
 ////////////////////////////////////////////////////////////////////////////////
@@ -193,7 +193,6 @@ AABBTree::AABBTree(const MatrixXd &V, const MatrixXi &F) {
 	}
     // Method (1): Top-down approach.
     // Split each set of primitives into 2 sets of roughly equal size, based on sorting the centroids.
-    std::cout << "Making the top level box" << std::endl;
     AlignedBox3d bbox;
     for(int i = 0; i < F.rows(); i++){
         Vector3d a = V.row(F.row(i)[0]);
@@ -203,11 +202,8 @@ AABBTree::AABBTree(const MatrixXd &V, const MatrixXi &F) {
         bboxes.push_back(box);
         bbox.extend(box);
     }
-    std::cout << "bboxes size: " << bboxes.size() << std::endl;
     Vector3d op = bbox.sizes();
-    std::cout << "going into recursive calls:" << std::endl;
     root = make_AABBTree(V, F, centroids, -1, indices, 0, indices.size(), op);
-    std::cout << "done with the recursive calls:" << std::endl;
     // Method (2): Bottom-up approach.
     // Merge nodes 2 by 2, starting from the leaves of the forest, until only 1 tree is left.
 }
@@ -323,7 +319,7 @@ bool intersect_triangle(const Ray &ray, const Vector3d &a, const Vector3d &b, co
     M << -u, -v, ray.direction;
     Vector3d _b = a - ray.origin;
     Vector3d solution = M.colPivHouseholderQr().solve(_b);
-    if (solution[0] >= 0 && solution[1] >= 0 && solution[2] > 0 && solution[0] + solution[1] <= 1) {
+    if (solution[0] >= 0 && solution[1] >= 0 && solution[2] >= 0 && solution[0] + solution[1] <= 1) {
         // The ray hit the parallelogram, compute the exact intersection point
         hit.position = ray.origin + solution[2]*ray.direction;
         // Compute normal at the intersection point
@@ -345,22 +341,18 @@ bool intersect_box(const Ray &ray, const AlignedBox3d &box, bool f) {
     Vector3d t1 = (box.max()-ray.origin).cwiseQuotient(ray.direction);
     double tmin = t0.cwiseMin(t1).maxCoeff();
     double tmax = t1.cwiseMax(t0).minCoeff();
-//    if(f){
-//        std::cout << "hit with box tmin: " << tmin << " " << ray.origin + tmin*ray.direction << std::endl;
-//        std::cout << "hit with box tmax: " << tmax << " " << ray.origin + tmax*ray.direction << std::endl;
-//    }
-    if((tmin > tmax || tmax < 0)){
+    if((tmin > tmax || tmax < 0)){  // We might have some problems with precision, but I haven't experienced any yet.
         return false;
     }
-//    if(tmax < 0 - epsilon){
-//        return false;
-//    }
-//    if (tmin > tmax + epsilon){
-//        return false;
-//    }
-//    if(tmin < 0 - epsilon){
-//        return true;
-//    }
+    //    if(tmax < 0 - epsilon){
+    //        return false;
+    //    }
+    //    if (tmin > tmax + epsilon){
+    //        return false;
+    //    }
+    //    if(tmin < 0 - epsilon){
+    //        return true;
+    //
     return true;
 }
 
@@ -391,7 +383,7 @@ bool Mesh::intersect(const Ray &ray, Intersection &closest_hit) {
             return true;
 	    }
 	}else{
-        // TODO: Mesh Intersection Method (2): Traverse the BVH tree and test the intersection with triangles at the leaf nodes that intersects the input ray.
+        // Mesh Intersection Method (2): Traverse the BVH tree and test the intersection with triangles at the leaf nodes that intersects the input ray.
         bool found = false;
         return intersect_helper(ray, *bvh.nodes[bvh.root], closest_hit, found);
 	}
@@ -495,7 +487,10 @@ Object * find_nearest_object(const Scene &scene, const Ray &ray, Intersection &c
     for (ObjectPtr obj : scene.objects){
         Intersection hit;
 	    if(obj->intersect(ray, hit)){
-	        if(i == 0 || (hit.position-ray.origin).norm() < (closest_hit.position-ray.origin).norm()){
+	        if(i != 0 && (hit.position-ray.origin).norm() < (closest_hit.position-ray.origin).norm()){
+	            int x = 0;
+	        }
+	        if(closest_index < 0 || (hit.position-ray.origin).norm() < (closest_hit.position-ray.origin).norm()){
 	            closest_hit = hit;
                 closest_index = i;
 	        }
@@ -521,12 +516,12 @@ bool is_light_visible(const Scene &scene, const Ray &ray, const Light &light) {
 
 Vector3d shoot_ray(const Scene &scene, const Ray &ray, int max_bounce) {
 	Intersection hit;
-	if (Object * obj = find_nearest_object(scene, ray, hit)) {
+	Vector3d x = scene.background_color;
+    if (Object * obj = find_nearest_object(scene, ray, hit)) {
 		// 'obj' is not null and points to the object of the scene hit by the ray
-		return ray_color(scene, ray, *obj, hit, max_bounce);
+        return ray_color(scene, ray, *obj, hit, max_bounce);
 	} else {
-		// 'obj' is null, we must return the background color
-		return scene.background_color;
+        return scene.background_color;
 	}
 }
 
@@ -534,9 +529,9 @@ Vector3d shoot_ray(const Scene &scene, const Ray &ray, int max_bounce) {
 
 void render_scene(const Scene &scene) {
 	std::cout << "Simple ray tracer." << std::endl;
-
-	int w = 640;
-	int h = 480;
+    int f = 1;
+	int w = 640/f;
+	int h = 480/f;
 	MatrixXd R = MatrixXd::Zero(w, h);
 	MatrixXd G = MatrixXd::Zero(w, h);
 	MatrixXd B = MatrixXd::Zero(w, h);
@@ -546,19 +541,27 @@ void render_scene(const Scene &scene) {
 	// The sensor grid is at a distance 'focal_length' from the camera center,
 	// and covers an viewing angle given by 'field_of_view'.
 	double aspect_ratio = double(w) / double(h);
-	double scale_y = 1.0; // TODO: (field of view) Stretch the pixel grid by the proper amount here to produce the field of view (not required for assignment 4)
-	double scale_x = 1.0; //
-
+    double scale_y = 1.0; // TODO: (field of view) Stretch the pixel grid by the proper amount here to produce the field of view (not required for assignment 4)
+    double scale_x = 1.0; //
+	if (w > h){
+	    scale_x *= aspect_ratio;
+	}else if (h > w){
+	    scale_y *= aspect_ratio;
+	}
 	// The pixel grid through which we shoot rays is at a distance 'focal_length'
 	// from the sensor, and is scaled from the canonical [-1,1] in order
 	// to produce the target field of view.
-	Vector3d grid_origin(-scale_x, scale_y, -scene.camera.focal_length);
+
+	// fix camera position
+	// The sensor of the camera is located on the point scene.camera.position
+	Vector3d grid_origin(-1*scale_x, 1*scale_y, 0);
+	grid_origin = grid_origin + scene.camera.position;
     Vector3d x_displacement((2.0/w*scale_x), 0, 0);
-    Vector3d y_displacement(0, (-2.0/h*scale_y)*aspect_ratio, 0);
-    if(w > h){
-        x_displacement = Vector3d((2.0/w*scale_x)*aspect_ratio, 0, 0);
-        y_displacement = Vector3d(0, (-2.0/h*scale_y), 0);
-    }
+    Vector3d y_displacement(0, (-2.0/h*scale_y), 0);
+    // Since there is no parameter for the distance between the sensor and the center of projection for perspective projection
+    // We set the center of projection depending on the position of the camera
+    double vanishing_point_distance = 3.0;
+    Vector3d vp(scene.camera.position[0], scene.camera.position[1],scene.camera.position[2] + vanishing_point_distance);
 	for (unsigned i = 0; i < w; ++i) {
 	    if (SHOW_PROGRESS){
             std::cout << std::fixed << std::setprecision(2);
@@ -566,13 +569,14 @@ void render_scene(const Scene &scene) {
 	    }
 		for (unsigned j = 0; j < h; ++j) {
 			// TODO (Assignment 2, depth of field) (not required for assignment 4)
+//			std::cout << "i, j: " << i << " " << j << std::endl;
 			Vector3d shift = grid_origin + (i+0.5)*x_displacement + (j+0.5)*y_displacement;
 
 			// Prepare the ray
 			Ray ray;
 			if (scene.camera.is_perspective) {
 				// Perspective camera
-				ray.origin = scene.camera.position;
+				ray.origin = vp;
                 ray.direction =  (shift - ray.origin).normalized();
 			} else {
 				// Orthographic camera
