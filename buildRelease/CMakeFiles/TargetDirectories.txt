@@ -1,0 +1,3 @@
+/Users/tomasortega/CLionProjects/assignment4/buildRelease/CMakeFiles/rebuild_cache.dir
+/Users/tomasortega/CLionProjects/assignment4/buildRelease/CMakeFiles/edit_cache.dir
+/Users/tomasortega/CLionProjects/assignment4/buildRelease/CMakeFiles/assignment4.dir

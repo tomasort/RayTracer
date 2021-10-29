@@ -8,9 +8,9 @@
 	"Camera":
 	{
 		"IsPerspective": true,
-		"Position": [0, 0, 2],
+		"Position": [0, 0, 6],
 		"FieldOfView": 0.7854,
-		"FocalLength": 2.0,
+		"FocalLength": 0.2,
 		"LensRadius": 0.08
 	},
 	"Materials": [
@@ -59,36 +59,6 @@
 			"Type": "Mesh",
 			"Material": 0,
 			"Path": "dragon.off"
-		},
-		{
-			"Type": "Sphere",
-			"Material": 0,
-			"Position": [5, 0, 0],
-			"Radius": 1
-		},
-		{
-			"Type": "Sphere",
-			"Material": 0,
-			"Position": [4, 0.1, 1],
-			"Radius": 0.5
-		},
-		{
-			"Type": "Sphere",
-			"Material": 0,
-			"Position": [-2, 0.4, 1],
-			"Radius": 0.5
-		},
-		{
-			"Type": "Sphere",
-			"Material": 0,
-			"Position": [-5, 0.8, -1],
-			"Radius": 0.5
-		},
-		{
-			"Type": "Sphere",
-			"Material": 0,
-			"Position": [-8, 1.6, 1],
-			"Radius": 0.5
 		}
 	]
 }
