@@ -105,11 +105,11 @@ struct AABBTree {
 	};
 
 	std::vector<Node*> nodes;
-    std::vector<AlignedBox3d> bboxes;
     int root;
 
 	AABBTree() = default; // Default empty constructor
 	AABBTree(const MatrixXd &V, const MatrixXi &F); // Build a BVH from an existing mesh
+	// make_AABBTree is a recursive helper function to build the tree in the constructor
     int make_AABBTree(const MatrixXd &V, const MatrixXi &F, const MatrixXd &centroids, int parent_indx,
                       std::vector<int> &indices, int low, int high, const Vector3d &parent_box_size);
 };
@@ -124,6 +124,7 @@ struct Mesh : public Object {
 	Mesh(const std::string &filename);
 	virtual ~Mesh() = default;
 	virtual bool intersect(const Ray &ray, Intersection &hit) override;
+	// Intersect helper is a helper function to recursively compute the intersection point
     bool intersect_helper(const Ray &ray, const AABBTree::Node &root, Intersection &hit, bool &found);
 };
 
@@ -180,7 +181,8 @@ AlignedBox3d bbox_triangle(const Vector3d &a, const Vector3d &b, const Vector3d 
 AABBTree::AABBTree(const MatrixXd &V, const MatrixXi &F) {
     // V: the vertices of the triangles in the mesh
     // F: the facets of the triangles in the mesh
-    std::vector<int> indices;
+    std::vector<int> indices; // we sort the indices instead of the centroid themselves when we are looking for a split point
+
 	// Compute the centroids of all the triangles in the input mesh
 	MatrixXd centroids(F.rows(), V.cols());
 	centroids.setZero();
@@ -191,6 +193,7 @@ AABBTree::AABBTree(const MatrixXd &V, const MatrixXi &F) {
 		}
 		centroids.row(i) /= F.cols();
 	}
+
     // Method (1): Top-down approach.
     // Split each set of primitives into 2 sets of roughly equal size, based on sorting the centroids.
     AlignedBox3d bbox;
@@ -199,11 +202,12 @@ AABBTree::AABBTree(const MatrixXd &V, const MatrixXi &F) {
         Vector3d b = V.row(F.row(i)[1]);
         Vector3d c = V.row(F.row(i)[2]);
         AlignedBox3d box = bbox_triangle(a, b, c);
-        bboxes.push_back(box);
         bbox.extend(box);
     }
-    Vector3d op = bbox.sizes();
-    root = make_AABBTree(V, F, centroids, -1, indices, 0, indices.size(), op);
+    Vector3d root_box_size = bbox.sizes();
+    root = make_AABBTree(V, F, centroids, -1, indices, 0, indices.size(), root_box_size);
+
+    // TODO: Implement the AABB tree using the bottom-up approach
     // Method (2): Bottom-up approach.
     // Merge nodes 2 by 2, starting from the leaves of the forest, until only 1 tree is left.
 }
@@ -213,7 +217,7 @@ int AABBTree::make_AABBTree(const MatrixXd &V, const MatrixXi &F, const MatrixXd
      * This Function returns the index of the root of the tree in the AABB nodes vector
      * We use the indices vector to maintain a list of indices to index into the facets matrix
      */
-    Node *node = new Node();
+    Node *node = new Node(); // we use a pointer because we want to add the current node to the vector of nodes before we add the children
     node->parent = parent_indx;
     node->triangle = -1;
     node->left = -1;
@@ -222,40 +226,37 @@ int AABBTree::make_AABBTree(const MatrixXd &V, const MatrixXi &F, const MatrixXd
     int current_indx = nodes.size();
     nodes.push_back(node);
     if(high-low == 1){
+        // If we are at a leaf
         node->triangle = current_indx;
         node->triangle_facet = indices[low];
         node->bbox = bbox_triangle(V.row(F.row(indices[low])[0]), V.row(F.row(indices[low])[1]), V.row(F.row(indices[low])[2]));
         return current_indx;
     }
+
+    // Find the longest dimension of the bbox (more or less) of the parent.
     int longest_dim = 0;
-    // Find the longest dimension of the bbox (more or less) of the parent
     for(int i = 0; i < 3; i++){
         if(parent_box_size[longest_dim] < parent_box_size[i]){
             longest_dim = i;
         }
     }
-//    std::vector<int> elements;
-//    for(std::vector<int>::iterator it = indices.begin()+low; it != indices.begin()+high; it++){
-//        elements.push_back(*it);
-//    }
-    // We need to sort the centroids according to the longest dim to see where we need to partition the box
-//    std::cout << "sorting the indices from " << low << " to " << high << std::endl;
     std::sort(indices.begin()+low,indices.begin()+high,[longest_dim, &centroids](int a, int b){
         return centroids.row(a)[longest_dim] < centroids.row(b)[longest_dim];
     });
     int left_end = low + std::ceil((high-low)/2.0);
+
     // now we need to divide the parent box according to mid
     Vector3d left_box_size = parent_box_size;
-    left_box_size[longest_dim] = centroids.row(indices[left_end-1])[longest_dim] - centroids.row(indices[low])[longest_dim];
     Vector3d right_box_size = parent_box_size;
+
+    left_box_size[longest_dim] = centroids.row(indices[left_end-1])[longest_dim] - centroids.row(indices[low])[longest_dim];
     right_box_size[longest_dim] = centroids.row(indices[high-1])[longest_dim] - centroids.row(indices[left_end])[longest_dim];
-//    std::cout << "Going into left subtree" << std::endl;
+
     node->left = make_AABBTree(V, F, centroids, current_indx, indices, low, left_end, left_box_size);
-//    std::cout << "Going into right subtree" << std::endl;
     node->right = make_AABBTree(V, F, centroids, current_indx, indices, left_end, high, right_box_size);
+
     node->bbox.extend(nodes[node->left]->bbox);
     node->bbox.extend(nodes[node->right]->bbox);
-//    std::cout << "Current node is done" << std::endl;
     return current_indx;
 }
 
@@ -344,20 +345,11 @@ bool intersect_box(const Ray &ray, const AlignedBox3d &box, bool f) {
     if((tmin > tmax || tmax < 0)){  // We might have some problems with precision, but I haven't experienced any yet.
         return false;
     }
-    //    if(tmax < 0 - epsilon){
-    //        return false;
-    //    }
-    //    if (tmin > tmax + epsilon){
-    //        return false;
-    //    }
-    //    if(tmin < 0 - epsilon){
-    //        return true;
-    //
     return true;
 }
 
 bool Mesh::intersect(const Ray &ray, Intersection &closest_hit) {
-	//  Mesh Intersection Method (1): Traverse every triangle and return the closest hit.
+	//  Method (1): Traverse every triangle and return the closest hit.
 	if(MESH_INTERSECTION_METHOD == 1){
         double closest_hit_distance = std::numeric_limits<double>::infinity();
         for(int i = 0; i < this->facets.rows(); i++){
@@ -366,12 +358,6 @@ bool Mesh::intersect(const Ray &ray, Intersection &closest_hit) {
             Vector3d c = this->vertices.row(this->facets.row(i)[2]);
             Intersection hit;
             if(intersect_triangle(ray, a, b, c, hit)){
-//                bool f = intersect_box(ray, bbox_triangle(a, b, c), false);
-//                if (!f){
-//                    std::cout << "hit with triangle but not with box" << std::endl;
-//                    bool f = intersect_box(ray, bbox_triangle(a, b, c), true);
-//                    std::cout << "hit with triangle: " << hit.position << std::endl;
-//                }
                 double distance_from_origin = (hit.position-ray.origin).norm();
                 if (distance_from_origin < closest_hit_distance){
                     closest_hit_distance = distance_from_origin;
@@ -383,7 +369,7 @@ bool Mesh::intersect(const Ray &ray, Intersection &closest_hit) {
             return true;
 	    }
 	}else{
-        // Mesh Intersection Method (2): Traverse the BVH tree and test the intersection with triangles at the leaf nodes that intersects the input ray.
+        // Method (2): Traverse the BVH tree and test the intersection with triangles at the leaf nodes that intersects the input ray.
         bool found = false;
         return intersect_helper(ray, *bvh.nodes[bvh.root], closest_hit, found);
 	}
@@ -445,7 +431,7 @@ Vector3d ray_color(const Scene &scene, const Ray &ray, const Object &obj, const 
 		Vector3d Li = (light.position - hit.position).normalized();
 		Vector3d N = hit.normal;
 
-		// (shadow rays) We need a ray from the point of intersection to the light
+		// TODO: (shadow rays) We need a ray from the point of intersection to the light
 //		Ray r;
 //		r.origin = hit.position + hit.normal*0.01;
 //        r.direction = (light.position- hit.position);
@@ -487,9 +473,6 @@ Object * find_nearest_object(const Scene &scene, const Ray &ray, Intersection &c
     for (ObjectPtr obj : scene.objects){
         Intersection hit;
 	    if(obj->intersect(ray, hit)){
-	        if(i != 0 && (hit.position-ray.origin).norm() < (closest_hit.position-ray.origin).norm()){
-	            int x = 0;
-	        }
 	        if(closest_index < 0 || (hit.position-ray.origin).norm() < (closest_hit.position-ray.origin).norm()){
 	            closest_hit = hit;
                 closest_index = i;
@@ -539,7 +522,7 @@ void render_scene(const Scene &scene) {
 
 	// The camera always points in the direction -z
 	// The sensor grid is at a distance 'focal_length' from the camera center,
-	// and covers an viewing angle given by 'field_of_view'.
+	// and covers a viewing angle given by 'field_of_view'.
 	double aspect_ratio = double(w) / double(h);
     double scale_y = 1.0; // TODO: (field of view) Stretch the pixel grid by the proper amount here to produce the field of view (not required for assignment 4)
     double scale_x = 1.0; //
@@ -548,9 +531,6 @@ void render_scene(const Scene &scene) {
 	}else if (h > w){
 	    scale_y *= aspect_ratio;
 	}
-	// The pixel grid through which we shoot rays is at a distance 'focal_length'
-	// from the sensor, and is scaled from the canonical [-1,1] in order
-	// to produce the target field of view.
 
 	// fix camera position
 	// The sensor of the camera is located on the point scene.camera.position
@@ -558,6 +538,7 @@ void render_scene(const Scene &scene) {
 	grid_origin = grid_origin + scene.camera.position;
     Vector3d x_displacement((2.0/w*scale_x), 0, 0);
     Vector3d y_displacement(0, (-2.0/h*scale_y), 0);
+
     // Since there is no parameter for the distance between the sensor and the center of projection for perspective projection
     // We set the center of projection depending on the position of the camera
     double vanishing_point_distance = 3.0;
